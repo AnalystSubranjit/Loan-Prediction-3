@@ -1,0 +1,168 @@
+---
+title: "Loan prediction using Machine Learning "
+author: "Subranjit sahoo"
+output: github_document
+html_document: default
+---
+
+Dream Housing Finance company deals in providing home loans. They have presence across all urban, semi urban and rural areas. Customer first apply for home loan after that company validates the customer eligibility for loan.
+
+## Problem Statement-
+
+Company wants to automate the loan eligibility process (real time) based on customer detail provided while filling online application form. These details are Gender, Marital Status, Education, Number of Dependents, Income, Loan Amount, Credit History and others. To automate this process, they have given a problem to identify the customers segments, those are eligible for loan amount so that they can specifically target these customers. Here they have provided a partial data set.
+
+###  > Objective:- To predict the number of customers who are eligible for loan based on  other characteristics of customer data.
+
+#### This is the description of the variables in the data set
+
+* Variable           * Description
+* Loan_ID            * Unique Loan ID 
+* Gender             * Male/ Female
+* Married            * Applicant married (Y/N)
+* Dependents         * Number of dependents
+* Education          * Applicant Education (Graduate/ Under Graduate)
+* Self_Employed      * Self employed (Y/N)
+* ApplicantIncome    * Applicant income
+* Coapplicant Income * Coapplicant income
+* LoanAmount         * Loan amount in thousands
+* Loan_Amount_Term   * Term of loan in months
+* Credit_History     * credit history meets guidelines
+* Property_Area      * Urban/ Semi Urban/ Rural
+* Loan_Status        * Loan approved (Y/N)
+
+```{r include=FALSE}
+library(readr)
+train <- read_csv("C:/Users/VAIO/Desktop/Data analytics/Analytics-Vidhya/Loan prediction-3/train_u6lujuX_CVtuZ9i.csv",na="NA")
+View(train)
+```
+```{r,message=FALSE,warning=FALSE}
+#loading required packages
+library(caret)
+library(gbm)
+library(ggplot2)
+```
+Looking at the structure of data
+`train` contains the data set
+```{r}
+str(train)
+summary(train)
+```
+
+Checking for 'NA' or missing values
+```{r}
+sum(is.na(train))
+
+#Imputing missing values using KNN.Also centering and scaling numerical columns
+
+preProcValues= preProcess(train, method = c("knnImpute","center","scale"))
+preProcValues
+```
+Lets predict the missing values after the imputation
+```{r,warning=FALSE}
+library(RANN)
+train_processed=predict(preProcValues,train)
+sum(is.na(train_processed))
+```
+
+```{r}
+#Converting outcome variable to numeric
+train_processed$Loan_Status<-ifelse(train_processed$Loan_Status=='N',0,1)
+```
+
+```{r}
+id<-train_processed$Loan_ID
+train_processed$Loan_ID<-NULL
+
+#Checking the structure of processed train file
+str(train_processed)
+```
+Cretaing dummy variables using a encoding. The caret package offers some unique features that help in creating dummy variables
+
+```{r}
+# Converting every categorical variable to numerical using dummy variables
+dmy <- dummyVars(" ~ .", data = train_processed,fullRank = T)
+# Here, â fullrank=Tâ  will create only (n-1) columns for a categorical column with n different levels. This works well particularly for the representing categorical predictors like gender, married, etc.
+
+train_transformed <- data.frame(predict(dmy, newdata = train_processed))
+# creating dummy variables on the train_transformed set
+str(train_transformed)
+```
+```{r}
+#Converting the dependent variable back to categorical variable
+train_transformed$Loan_Status=as.factor(train_transformed$Loan_Status)
+str(train_transformed)
+```
+Now lets create a cross validation set to tune our model.We will use createDataPartition() to do that.We will split our training data into two sets : 75% `trainset` and 25% `testset`
+```{r}
+index=createDataPartition(train_transformed$Loan_Status,p=0.75,list = F)
+# createDataPartition() also ensures uniform distribution of outcome variable classs
+trainset=train_transformed[index,]
+testset=train_transformed[-index,]
+```
+```{r}
+# checking the structure of `trainset`
+str(trainset)
+```
+As the training and testing sets are created now we will use select the important variables for our model using the recursive feature elimination or `rfe` method.
+`rfe` is used to find the best subset of features.
+```{r message=FALSE}
+control= rfeControl(functions = rfFuncs, method = "repeatedcv",
+                    repeats=3, verbose=F)
+outcomeName='Loan_Status'
+predictors=names(trainset)[!names(trainset) %in% outcomeName]
+predictors
+Loan_Pred_Prof= rfe(trainset[,predictors], trainset[,outcomeName],
+                 rfeControl= control)
+Loan_Pred_Prof
+```
+Lets see what all machine learning algorithms are provided by caret
+```{r}
+names(getModelInfo())
+```
+lets go with the gbm and logistic model and check our performance on both the models
+```{r}
+# gradient boosting model
+model_gbm=train(trainset[,predictors],trainset[,outcomeName],method='gbm')
+# Logistic regression model
+model_glm<-train(trainset[,predictors],trainset[,outcomeName],method='glm')
+
+```
+Lets tune the parameters of our model.We will use 5-Fold cross-validation technique repeated 5 times.
+```{r}
+fitControl= trainControl(
+             method = "repeatedcv",
+             number = 5, repeats = 5)
+
+#training our model for gbm model
+model_gbm=train(trainset[,predictors],trainset[,outcomeName],method='gbm',trControl=fitControl)
+
+print(model_gbm)
+plot(model_gbm)
+
+#training our model for logistic regression model
+model_glm=train(trainset[,predictors],trainset[,outcomeName],method='glm',trControl=fitControl)
+print(model_glm)
+
+```
+Now lets look at the important variables in our model 
+
+```{r}
+#Checking variable importance for GLM
+varImp(object = model_glm)
+plot(varImp(object = model_glm),main="GLM- Variable importance")
+```
+Finally its time to do prediction on the test set
+```{r}
+# Prediction for Logistic regression model
+predictions=predict.train(object = model_glm,testset[,predictors],type = "raw")
+table(predictions)
+plot(predictions,main="Prediction report")
+
+# Prediction for GBM  model
+predictions2=predict.train(object = model_gbm,testset[,predictors],type = "raw")
+table(predictions2)
+plot(predictions2,main = "Prediction report")
+
+```
+We find that both the model perform really well.The %of data captured looks good.
+
